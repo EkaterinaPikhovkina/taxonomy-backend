@@ -1,0 +1,129 @@
+from fastapi import HTTPException
+from SPARQLWrapper import SPARQLWrapper, JSON
+import requests
+
+from utils.sparql_queries import clear_repository_query, get_taxonomy_hierarchy_query
+
+GRAPHDB_ENDPOINT_QUERY = "http://localhost:7200/repositories/animals"
+GRAPHDB_ENDPOINT_STATEMENTS = "http://localhost:7200/repositories/animals/statements"
+
+
+def get_taxonomy_hierarchy():
+    sparql = SPARQLWrapper(GRAPHDB_ENDPOINT_QUERY)
+    sparql.setQuery(get_taxonomy_hierarchy_query())
+    sparql.setReturnFormat(JSON)
+
+    try:
+        results = sparql.query().convert()
+        return results["results"]["bindings"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка при запросе к GraphDB: {e}")
+
+
+def build_hierarchy_tree(bindings):
+    nodes = {}
+    root_nodes = []
+
+    for binding in bindings:
+        class_uri = binding["class"]["value"]  # Получаем URI класса
+        # Больше не обрабатываем метки
+
+        if class_uri not in nodes:
+            nodes[class_uri] = {
+                "key": class_uri,
+                "title": class_uri.split('/')[-1],  # Заголовок берем из URI (последняя часть)
+                "children": [],
+            }
+
+        if "subClass" in binding:
+            subclass_uri = binding["subClass"]["value"]  # Получаем URI подкласса
+            # Больше не обрабатываем метки подкласса
+
+            if subclass_uri not in nodes:
+                nodes[subclass_uri] = {
+                    "key": subclass_uri,
+                    "title": subclass_uri.split('/')[-1],  # Заголовок подкласса берем из URI
+                    "children": [],
+                }
+            nodes[binding["class"]["value"]]["children"].append(nodes[subclass_uri])
+        else:
+            root_nodes.append(nodes[class_uri])  # Класс без подкласса - считаем корнем
+
+    # Находим настоящие корни (классы без `rdfs:subClassOf` для других классов)
+    real_root_nodes = []
+    is_subclass = set()
+    for node_uri in nodes:
+        for child in nodes[node_uri]["children"]:
+            is_subclass.add(child["key"])
+
+    for node_uri in nodes:
+        if node_uri not in is_subclass:
+            real_root_nodes.append(nodes[node_uri])
+
+    return real_root_nodes
+
+
+# def clear_graphdb_repository(graphdb_endpoint):
+#     sparql = SPARQLWrapper(graphdb_endpoint)
+#     sparql.method = 'POST'
+#
+#     clear_query = clear_repository_query()
+#     sparql.setQuery(clear_query)
+#
+#     try:
+#         sparql.query()
+#         return True
+#     except Exception as e:
+#         print(f"Помилка при очищенні GraphDB репозиторію: {e}")
+#         return False
+
+
+def clear_graphdb_repository(graphdb_endpoint):
+    """
+    Очищает GraphDB репозиторий, отправляя SPARQL запрос в теле POST.
+    """
+
+    clear_query = clear_repository_query()
+    print("SPARQL Query being sent (in POST body):", clear_query)
+
+    headers = {'Content-Type': 'application/sparql-update'}
+
+    try:
+        response = requests.post(graphdb_endpoint, data=clear_query,
+                                 headers=headers)  # Отправляем POST с query в data (тело запроса) и headers
+
+        if response.status_code == 200 or response.status_code == 204:
+            print("Репозиторий GraphDB успешно очищен (requests, POST body)")
+            return True
+        else:
+            print(f"Ошибка при очистке GraphDB репозитория (requests, POST body). Статус код: {response.status_code}")
+            print(f"Содержимое ответа: {response.content.decode('utf-8')}")
+            return False
+
+    except requests.exceptions.RequestException as e:
+        print(f"Ошибка соединения с GraphDB (requests, POST body): {e}")
+        return False
+
+
+def import_taxonomy_to_graphdb(file_path, graphdb_endpoint):
+    try:
+        with open(file_path, 'rb') as f:  # Відкриваємо файл як бінарний
+            data = f.read()
+
+        headers = {}
+
+        if file_path.endswith('.ttl'):
+            headers['Content-Type'] = 'text/turtle'
+        elif file_path.endswith('.rdf'):
+            headers['Content-Type'] = 'application/rdf+xml'
+        else:
+            raise ValueError("Непідтримуваний формат файлу для імпорту")
+
+        response = requests.post(graphdb_endpoint, data=data, headers=headers)
+
+        if response.status_code != 204 and response.status_code != 200:
+            raise Exception(
+                f"Помилка імпорту в GraphDB. Статус код: {response.status_code}, Відповідь: {response.text}")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
