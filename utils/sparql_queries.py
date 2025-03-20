@@ -1,7 +1,4 @@
 def get_taxonomy_hierarchy_query():
-    """
-    SPARQL запит для отримання ієрархії таксономії.
-    """
     return """
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
@@ -24,9 +21,21 @@ def get_taxonomy_hierarchy_query():
 
 
 def clear_repository_query():
-    """
-    SPARQL запит для видалення всіх тріплетів з репозиторію.
-    """
     return """
         CLEAR ALL
+    """
+
+
+def export_taxonomy_query():
+    return """
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX ex: <http://example.org/taxonomy/>
+
+        CONSTRUCT {
+          ?s ?p ?o .
+        }
+        WHERE {
+          ?s ?p ?o .
+        }
     """

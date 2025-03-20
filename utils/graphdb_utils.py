@@ -1,8 +1,12 @@
 from fastapi import HTTPException
-from SPARQLWrapper import SPARQLWrapper, JSON
+from SPARQLWrapper import SPARQLWrapper, JSON, TURTLE, RDFXML
 import requests
 
-from utils.sparql_queries import clear_repository_query, get_taxonomy_hierarchy_query
+from utils.sparql_queries import (
+    clear_repository_query,
+    get_taxonomy_hierarchy_query,
+    export_taxonomy_query,
+)
 
 GRAPHDB_ENDPOINT_QUERY = "http://localhost:7200/repositories/animals"
 GRAPHDB_ENDPOINT_STATEMENTS = "http://localhost:7200/repositories/animals/statements"
@@ -63,21 +67,6 @@ def build_hierarchy_tree(bindings):
     return real_root_nodes
 
 
-# def clear_graphdb_repository(graphdb_endpoint):
-#     sparql = SPARQLWrapper(graphdb_endpoint)
-#     sparql.method = 'POST'
-#
-#     clear_query = clear_repository_query()
-#     sparql.setQuery(clear_query)
-#
-#     try:
-#         sparql.query()
-#         return True
-#     except Exception as e:
-#         print(f"Помилка при очищенні GraphDB репозиторію: {e}")
-#         return False
-
-
 def clear_graphdb_repository(graphdb_endpoint):
     """
     Очищает GraphDB репозиторий, отправляя SPARQL запрос в теле POST.
@@ -127,3 +116,21 @@ def import_taxonomy_to_graphdb(file_path, graphdb_endpoint):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def export_taxonomy(format_str):
+    sparql = SPARQLWrapper(GRAPHDB_ENDPOINT_QUERY)
+    sparql.setQuery(export_taxonomy_query())
+
+    if format_str == "ttl":
+        sparql.setReturnFormat(TURTLE)
+    elif format_str == "rdf":
+        sparql.setReturnFormat(RDFXML)
+    else:
+        raise ValueError("Непідтримуваний формат експорту")
+
+    try:
+        results = sparql.queryAndConvert()
+        return results.decode()  # Декодуємо з bytes в str
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Помилка при експорті з GraphDB: {e}")

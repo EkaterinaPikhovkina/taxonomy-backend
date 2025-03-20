@@ -1,21 +1,23 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, UploadFile, File, Query
+from fastapi.responses import JSONResponse, StreamingResponse
 from utils.graphdb_utils import (
     get_taxonomy_hierarchy,
     build_hierarchy_tree,
     clear_graphdb_repository,
     GRAPHDB_ENDPOINT_STATEMENTS,
-    import_taxonomy_to_graphdb
+    import_taxonomy_to_graphdb,
+    export_taxonomy,
 )
 import tempfile
 import os
+import io
+
 
 router = APIRouter()
 
 
 @router.get("/taxonomy-tree")
 async def read_taxonomy_tree():
-    """Эндпоинт для получения иерархии таксономии в виде древовидной структуры."""
     try:
         bindings = get_taxonomy_hierarchy()
 
@@ -34,9 +36,6 @@ async def read_taxonomy_tree():
 
 @router.post("/clear_repository")
 async def clear_repository_endpoint():
-    """
-    Endpoint для очищення GraphDB репозиторію.
-    """
     if clear_graphdb_repository(GRAPHDB_ENDPOINT_STATEMENTS):
         return {"message": "Репозиторій успішно очищено"}
     else:
@@ -45,9 +44,6 @@ async def clear_repository_endpoint():
 
 @router.post("/import_taxonomy")
 async def import_taxonomy_endpoint(file: UploadFile = File(...)):
-    """
-    Endpoint для імпорту таксономії з файлу (.ttl або .rdf).
-    """
     try:
         # Перевірка розширення файлу (можна додати більш детальну перевірку вмісту)
         if not file.filename.endswith((".ttl", ".rdf")):
@@ -71,3 +67,23 @@ async def import_taxonomy_endpoint(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Помилка при імпорті таксономії: {e}")
+
+
+@router.get("/export_taxonomy")
+async def export_taxonomy_endpoint(format: str = Query(..., regex="^(ttl|rdf)$")):
+    try:
+        content = export_taxonomy(format)
+
+        if format == "ttl":
+            content_type = "application/x-turtle"
+            filename = "taxonomy.ttl"
+        else:
+            content_type = "application/rdf+xml"
+            filename = "taxonomy.rdf"
+
+        # Використовуємо StreamingResponse для ефективної передачі даних
+        return StreamingResponse(io.BytesIO(content.encode()), media_type=content_type,
+                                 headers={"Content-Disposition": f"attachment;filename={filename}"})
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Помилка при експорті таксономії: {e}")
