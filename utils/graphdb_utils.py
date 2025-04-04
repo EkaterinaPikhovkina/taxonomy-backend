@@ -6,6 +6,8 @@ from utils.sparql_queries import (
     clear_repository_query,
     get_taxonomy_hierarchy_query,
     export_taxonomy_query,
+    add_concept_query,
+    delete_concept_query,
 )
 
 GRAPHDB_ENDPOINT_QUERY = "http://localhost:7200/repositories/animals"
@@ -134,3 +136,31 @@ def export_taxonomy(format_str):
         return results.decode()  # Декодуємо з bytes в str
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Помилка при експорті з GraphDB: {e}")
+
+
+def add_concept_to_graphdb(concept_uri, concept_label_en, concept_label_ru, parent_concept_uri, graphdb_endpoint):
+    sparql_query = add_concept_query(concept_uri, concept_label_en, concept_label_ru, parent_concept_uri)
+    print("SPARQL Query being sent for add concept:", sparql_query)
+
+    headers = {'Content-Type': 'application/sparql-update'}
+    try:
+        response = requests.post(graphdb_endpoint, data=sparql_query, headers=headers)
+        if response.status_code != 200 and response.status_code != 204:
+            raise Exception(
+                f"Помилка при додаванні концепту в GraphDB. Статус код: {response.status_code}, Відповідь: {response.text}")
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка соединения с GraphDB при добавлении концепта: {e}")
+
+
+def delete_concept_from_graphdb(concept_uri, graphdb_endpoint):
+    sparql_query = delete_concept_query(concept_uri)
+    print("SPARQL Query being sent for delete concept:", sparql_query)
+
+    headers = {'Content-Type': 'application/sparql-update'}
+    try:
+        response = requests.post(graphdb_endpoint, data=sparql_query, headers=headers)
+        if response.status_code != 200 and response.status_code != 204:
+            raise Exception(
+                f"Помилка при видаленні концепту з GraphDB. Статус код: {response.status_code}, Відповідь: {response.text}")
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка соединения с GraphDB при удалении концепта: {e}")

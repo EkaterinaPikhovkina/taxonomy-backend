@@ -7,13 +7,24 @@ from utils.graphdb_utils import (
     GRAPHDB_ENDPOINT_STATEMENTS,
     import_taxonomy_to_graphdb,
     export_taxonomy,
+    add_concept_to_graphdb,
+    delete_concept_from_graphdb,
 )
 import tempfile
 import os
 import io
-
+from pydantic import BaseModel
 
 router = APIRouter()
+
+
+class AddConceptRequest(BaseModel):
+    concept_name: str
+    parent_concept_uri: str
+
+
+class DeleteConceptRequest(BaseModel):
+    concept_uri: str
 
 
 @router.get("/taxonomy-tree")
@@ -87,3 +98,28 @@ async def export_taxonomy_endpoint(format: str = Query(..., regex="^(ttl|rdf)$")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Помилка при експорті таксономії: {e}")
+
+
+@router.post("/add_concept")
+async def add_concept_endpoint(request: AddConceptRequest):
+    try:
+        concept_name = request.concept_name
+        parent_concept_uri = request.parent_concept_uri
+        concept_uri = f"http://example.org/taxonomy/{concept_name}" # Simple URI creation, consider better approach in production
+        add_concept_to_graphdb(concept_uri, concept_name, concept_name, parent_concept_uri, GRAPHDB_ENDPOINT_STATEMENTS)
+        return {"message": f"Концепт '{concept_name}' успішно додано"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Помилка при додаванні концепту: {e}")
+
+@router.post("/delete_concept")
+async def delete_concept_endpoint(request: DeleteConceptRequest):
+    try:
+        concept_uri = request.concept_uri
+        delete_concept_from_graphdb(concept_uri, GRAPHDB_ENDPOINT_STATEMENTS)
+        return {"message": f"Концепт '{concept_uri}' успішно видалено"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Помилка при видаленні концепту: {e}")
