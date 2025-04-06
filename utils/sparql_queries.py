@@ -41,16 +41,31 @@ def export_taxonomy_query():
     """
 
 
-def add_concept_query(concept_uri, concept_label_en, concept_label_ru, parent_uri):
+def add_top_concept_query(concept_uri, definition):
+    definition_statement = ""
+    if definition:
+        definition_statement = f"""<{concept_uri}> rdfs:comment "{definition}" ."""
+
     return f"""
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         PREFIX ex: <http://example.org/taxonomy/>
 
         INSERT DATA {{
-          <{concept_uri}> rdf:type rdfs:Class ;
-                         rdfs:label "{concept_label_en}"@en ;
-                         rdfs:label "{concept_label_ru}"@ru .
+          <{concept_uri}> rdf:type rdfs:Class .
+          {definition_statement}
+        }}
+    """
+
+
+def add_subconcept_query(concept_uri, parent_uri):
+    return f"""
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX ex: <http://example.org/taxonomy/>
+
+        INSERT DATA {{
+          <{concept_uri}> rdf:type rdfs:Class .
           <{concept_uri}> rdfs:subClassOf <{parent_uri}> .
         }}
     """

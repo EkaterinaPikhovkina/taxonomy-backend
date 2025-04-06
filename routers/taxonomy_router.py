@@ -7,7 +7,8 @@ from utils.graphdb_utils import (
     GRAPHDB_ENDPOINT_STATEMENTS,
     import_taxonomy_to_graphdb,
     export_taxonomy,
-    add_concept_to_graphdb,
+    add_top_concept_to_graphdb,
+    add_subconcept_to_graphdb,
     delete_concept_from_graphdb,
 )
 import tempfile
@@ -18,9 +19,14 @@ from pydantic import BaseModel
 router = APIRouter()
 
 
-class AddConceptRequest(BaseModel):
+class AddSubConceptRequest(BaseModel):
     concept_name: str
     parent_concept_uri: str
+
+
+class AddTopConceptRequest(BaseModel):
+    concept_name: str
+    definition: str = None
 
 
 class DeleteConceptRequest(BaseModel):
@@ -42,7 +48,7 @@ async def read_taxonomy_tree():
         raise e
     except Exception as e:
         raise HTTPException(status_code=500,
-                            detail=f"Ошибка при обработке запроса: {e}")  # Возвращаем 500 ошибку клиенту
+                            detail=f"Ошибка при обработке запроса: {e}")
 
 
 @router.post("/clear_repository")
@@ -56,20 +62,16 @@ async def clear_repository_endpoint():
 @router.post("/import_taxonomy")
 async def import_taxonomy_endpoint(file: UploadFile = File(...)):
     try:
-        # Перевірка розширення файлу (можна додати більш детальну перевірку вмісту)
         if not file.filename.endswith((".ttl", ".rdf")):
             raise HTTPException(status_code=400, detail="Непідтримуваний формат файлу. Використовуйте .ttl або .rdf")
 
-        # Зберігаємо файл тимчасово
         with tempfile.NamedTemporaryFile(delete=False, suffix=file.filename) as tmp_file:
-            contents = await file.read()  # Зчитуємо вміст файлу
-            tmp_file.write(contents)  # Записуємо у тимчасовий файл
-            tmp_file_path = tmp_file.name  # Отримуємо шлях до тимчасового файлу
+            contents = await file.read()
+            tmp_file.write(contents)
+            tmp_file_path = tmp_file.name
 
-        # Викликаємо функцію для імпорту в GraphDB (цю функцію треба реалізувати в graphdb_utils.py)
         import_taxonomy_to_graphdb(tmp_file_path, GRAPHDB_ENDPOINT_STATEMENTS)  # Передаємо шлях до файлу та endpoint
 
-        # Видаляємо тимчасовий файл
         os.remove(tmp_file_path)
 
         return JSONResponse(content={"message": f"Таксономія з файлу '{file.filename}' успішно імпортована"})
@@ -92,7 +94,6 @@ async def export_taxonomy_endpoint(format: str = Query(..., regex="^(ttl|rdf)$")
             content_type = "application/rdf+xml"
             filename = "taxonomy.rdf"
 
-        # Використовуємо StreamingResponse для ефективної передачі даних
         return StreamingResponse(io.BytesIO(content.encode()), media_type=content_type,
                                  headers={"Content-Disposition": f"attachment;filename={filename}"})
 
@@ -100,18 +101,38 @@ async def export_taxonomy_endpoint(format: str = Query(..., regex="^(ttl|rdf)$")
         raise HTTPException(status_code=500, detail=f"Помилка при експорті таксономії: {e}")
 
 
-@router.post("/add_concept")
-async def add_concept_endpoint(request: AddConceptRequest):
+@router.post("/add_topconcept")
+async def add_topconcept_endpoint(request: AddTopConceptRequest):
+    try:
+        concept_name = request.concept_name
+        definition = request.definition
+        concept_uri = f"http://example.org/taxonomy/{concept_name}"
+        print(
+            f"Debug: concept_uri={concept_uri}, concept_name={concept_name}, definition={definition}")
+        add_top_concept_to_graphdb(concept_uri, definition,
+                                     GRAPHDB_ENDPOINT_STATEMENTS)
+        return {"message": f"Топ концепт '{concept_name}' успішно додано"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Помилка при додаванні топ концепту: {e}")
+
+
+@router.post("/add_subconcept")
+async def add_subconcept_endpoint(request: AddSubConceptRequest):
     try:
         concept_name = request.concept_name
         parent_concept_uri = request.parent_concept_uri
-        concept_uri = f"http://example.org/taxonomy/{concept_name}" # Simple URI creation, consider better approach in production
-        add_concept_to_graphdb(concept_uri, concept_name, concept_name, parent_concept_uri, GRAPHDB_ENDPOINT_STATEMENTS)
+        concept_uri = f"http://example.org/taxonomy/{concept_name}"
+        print(f"Debug: concept_uri={concept_uri}, concept_name={concept_name}, parent_concept_uri={parent_concept_uri}")
+        add_subconcept_to_graphdb(concept_uri, parent_concept_uri,
+                                  GRAPHDB_ENDPOINT_STATEMENTS)
         return {"message": f"Концепт '{concept_name}' успішно додано"}
     except HTTPException as e:
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Помилка при додаванні концепту: {e}")
+
 
 @router.post("/delete_concept")
 async def delete_concept_endpoint(request: DeleteConceptRequest):

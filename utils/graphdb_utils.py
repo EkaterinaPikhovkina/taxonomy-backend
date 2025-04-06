@@ -6,7 +6,8 @@ from utils.sparql_queries import (
     clear_repository_query,
     get_taxonomy_hierarchy_query,
     export_taxonomy_query,
-    add_concept_query,
+    add_subconcept_query,
+    add_top_concept_query,
     delete_concept_query,
 )
 
@@ -133,13 +134,28 @@ def export_taxonomy(format_str):
 
     try:
         results = sparql.queryAndConvert()
-        return results.decode()  # Декодуємо з bytes в str
+        return results.decode()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Помилка при експорті з GraphDB: {e}")
 
 
-def add_concept_to_graphdb(concept_uri, concept_label_en, concept_label_ru, parent_concept_uri, graphdb_endpoint):
-    sparql_query = add_concept_query(concept_uri, concept_label_en, concept_label_ru, parent_concept_uri)
+def add_top_concept_to_graphdb(concept_uri, definition, graphdb_endpoint):
+    sparql_query = add_top_concept_query(concept_uri, definition)
+    print("SPARQL Query being sent for add top concept:", sparql_query)
+
+    headers = {'Content-Type': 'application/sparql-update'}
+    try:
+        response = requests.post(graphdb_endpoint, data=sparql_query, headers=headers)
+        if response.status_code != 200 and response.status_code != 204:
+            raise Exception(
+                f"Помилка при додаванні топ концепту в GraphDB. Статус код: {response.status_code}, Відповідь: {response.text}")
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка соединения с GraphDB при добавлении топ концепта: {e}")
+
+
+def add_subconcept_to_graphdb(concept_uri, parent_concept_uri, graphdb_endpoint):
+    sparql_query = add_subconcept_query(concept_uri, parent_concept_uri)
     print("SPARQL Query being sent for add concept:", sparql_query)
 
     headers = {'Content-Type': 'application/sparql-update'}
