@@ -32,8 +32,7 @@ def build_hierarchy_tree(bindings):
     root_nodes = []
 
     for binding in bindings:
-        class_uri = binding["class"]["value"]  # Получаем URI класса
-        # Больше не обрабатываем метки
+        class_uri = binding["class"]["value"]
 
         if class_uri not in nodes:
             nodes[class_uri] = {
@@ -43,20 +42,18 @@ def build_hierarchy_tree(bindings):
             }
 
         if "subClass" in binding:
-            subclass_uri = binding["subClass"]["value"]  # Получаем URI подкласса
-            # Больше не обрабатываем метки подкласса
+            subclass_uri = binding["subClass"]["value"]
 
             if subclass_uri not in nodes:
                 nodes[subclass_uri] = {
                     "key": subclass_uri,
-                    "title": subclass_uri.split('/')[-1],  # Заголовок подкласса берем из URI
+                    "title": subclass_uri.split('/')[-1],
                     "children": [],
                 }
             nodes[binding["class"]["value"]]["children"].append(nodes[subclass_uri])
         else:
-            root_nodes.append(nodes[class_uri])  # Класс без подкласса - считаем корнем
+            root_nodes.append(nodes[class_uri])
 
-    # Находим настоящие корни (классы без `rdfs:subClassOf` для других классов)
     real_root_nodes = []
     is_subclass = set()
     for node_uri in nodes:
@@ -71,9 +68,6 @@ def build_hierarchy_tree(bindings):
 
 
 def clear_graphdb_repository(graphdb_endpoint):
-    """
-    Очищает GraphDB репозиторий, отправляя SPARQL запрос в теле POST.
-    """
 
     clear_query = clear_repository_query()
     print("SPARQL Query being sent (in POST body):", clear_query)
@@ -82,7 +76,7 @@ def clear_graphdb_repository(graphdb_endpoint):
 
     try:
         response = requests.post(graphdb_endpoint, data=clear_query,
-                                 headers=headers)  # Отправляем POST с query в data (тело запроса) и headers
+                                 headers=headers)
 
         if response.status_code == 200 or response.status_code == 204:
             print("Репозиторий GraphDB успешно очищен (requests, POST body)")
@@ -99,7 +93,7 @@ def clear_graphdb_repository(graphdb_endpoint):
 
 def import_taxonomy_to_graphdb(file_path, graphdb_endpoint):
     try:
-        with open(file_path, 'rb') as f:  # Відкриваємо файл як бінарний
+        with open(file_path, 'rb') as f:
             data = f.read()
 
         headers = {}

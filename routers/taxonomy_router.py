@@ -70,7 +70,7 @@ async def import_taxonomy_endpoint(file: UploadFile = File(...)):
             tmp_file.write(contents)
             tmp_file_path = tmp_file.name
 
-        import_taxonomy_to_graphdb(tmp_file_path, GRAPHDB_ENDPOINT_STATEMENTS)  # Передаємо шлях до файлу та endpoint
+        import_taxonomy_to_graphdb(tmp_file_path, GRAPHDB_ENDPOINT_STATEMENTS)
 
         os.remove(tmp_file_path)
 

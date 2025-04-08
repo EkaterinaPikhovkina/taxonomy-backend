@@ -5,9 +5,10 @@ def get_taxonomy_hierarchy_query():
         SELECT ?class ?subClass
         WHERE {
           ?class a rdfs:Class .
-          ?subClass rdfs:subClassOf ?class .
-          FILTER (?class != ?subClass)
-
+          OPTIONAL { ?subClass rdfs:subClassOf ?class . FILTER (?class != ?subClass) }
+          
+          FILTER STRSTARTS(STR(?class), "http://example.org/taxonomy/")
+          
           FILTER NOT EXISTS {
             ?intermediateClass rdfs:subClassOf ?class ;
                                rdfs:subClassOf ?superClass .
@@ -15,6 +16,7 @@ def get_taxonomy_hierarchy_query():
             FILTER (?intermediateClass != ?class)
             FILTER (?intermediateClass != ?subClass)
           }
+          
         }
         ORDER BY ?class ?subClass
     """
@@ -73,41 +75,23 @@ def add_subconcept_query(concept_uri, parent_uri):
 
 def delete_concept_query(concept_uri):
     return f"""
-        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        PREFIX ex: <http://example.org/taxonomy/>
 
         DELETE {{
-          ?concept ?p ?o .           # Удалить свойства самого концепта
-          ?subClass ?sub_p ?sub_o .   # Удалить свойства подклассов
-          ?indirectSubClass ?indirect_p ?indirect_o . # Удалить свойства косвенных подклассов
-          ?s rdfs:subClassOf ?concept . # Удалить отношения подкласса к удаляемому концепту
-          ?s rdfs:subClassOf ?subClass . # Удалить отношения подкласса к прямому подклассу
-          ?s rdfs:subClassOf ?indirectSubClass . # Удалить отношения подкласса к косвенному подклассу
+          ?node ?p ?o .                      # Удаляем все свойства концепта и его подклассов
+          ?s rdfs:subClassOf ?node .        # Удаляем подчинённые связи (кто указывает на ?node как на суперкласс)
         }}
         WHERE {{
-          BIND(<{concept_uri}> as ?concept)
-
-          # Найти сам концепт и его свойства
-          ?concept ?p ?o .
-
-          # Опционально найти прямые подклассы и их свойства
-          OPTIONAL {{
-            ?subClass rdfs:subClassOf ?concept .
-            ?subClass ?sub_p ?sub_o .
-          }}
-          # Опционально найти косвенные подклассы (подклассы подклассов) и их свойства.
-          # Используем рекурсивный путь rdfs:subClassOf* (ноль или более раз) чтобы найти все уровни подклассов.
-          OPTIONAL {{
-            ?indirectSubClass rdfs:subClassOf+ ?concept . # + означает 1 или более раз, * - 0 или более
-            FILTER (?indirectSubClass != ?concept) # Исключаем сам концепт
-            ?indirectSubClass ?indirect_p ?indirect_o .
-          }}
-
-          # Опционально найти отношения, где удаляемый концепт или его подклассы являются классом для других подклассов
-          OPTIONAL {{ ?s rdfs:subClassOf ?concept . }}
-          OPTIONAL {{ ?s rdfs:subClassOf ?subClass . }}
-          OPTIONAL {{ ?s rdfs:subClassOf ?indirectSubClass . }}
-
+          BIND(<{concept_uri}> AS ?root)
+        
+          # Находим сам узел и всех его наследников по иерархии
+          ?node rdfs:subClassOf* ?root .
+        
+          # Удаляем их свойства
+          OPTIONAL {{ ?node ?p ?o . }}
+        
+          # Удаляем связи, где другие классы указывают на них как на суперкласс
+          OPTIONAL {{ ?s rdfs:subClassOf ?node . }}
         }}
+
     """
