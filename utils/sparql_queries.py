@@ -1,14 +1,34 @@
 def get_taxonomy_hierarchy_query():
     return """
-        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-
-        SELECT ?class ?subClass
+        SELECT ?class ?classLabel ?classComment ?subClass ?subClassLabel ?subClassComment
         WHERE {
           ?class a rdfs:Class .
-          OPTIONAL { ?subClass rdfs:subClassOf ?class . FILTER (?class != ?subClass) }
           
+          OPTIONAL {
+            ?class rdfs:label ?classLabel .
+            FILTER (lang(?classLabel) = "en")
+          }
+          OPTIONAL {
+            ?class rdfs:comment ?classComment .
+            FILTER (lang(?classComment) = "en")
+          }
+        
+          OPTIONAL {
+            ?subClass rdfs:subClassOf ?class .
+            FILTER (?class != ?subClass)
+        
+            OPTIONAL {
+              ?subClass rdfs:label ?subClassLabel .
+              FILTER (lang(?subClassLabel) = "en")
+            }
+            OPTIONAL {
+              ?subClass rdfs:comment ?subClassComment .
+              FILTER (lang(?subClassComment) = "en")
+            }
+          }
+        
           FILTER STRSTARTS(STR(?class), "http://example.org/taxonomy/")
-          
+        
           FILTER NOT EXISTS {
             ?intermediateClass rdfs:subClassOf ?class ;
                                rdfs:subClassOf ?superClass .
@@ -16,7 +36,6 @@ def get_taxonomy_hierarchy_query():
             FILTER (?intermediateClass != ?class)
             FILTER (?intermediateClass != ?subClass)
           }
-          
         }
         ORDER BY ?class ?subClass
     """
@@ -78,20 +97,30 @@ def delete_concept_query(concept_uri):
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
         DELETE {{
-          ?node ?p ?o .                      # Удаляем все свойства концепта и его подклассов
-          ?s rdfs:subClassOf ?node .        # Удаляем подчинённые связи (кто указывает на ?node как на суперкласс)
+          ?node ?p ?o .                     
+          ?s rdfs:subClassOf ?node .       
         }}
         WHERE {{
           BIND(<{concept_uri}> AS ?root)
-        
-          # Находим сам узел и всех его наследников по иерархии
           ?node rdfs:subClassOf* ?root .
-        
-          # Удаляем их свойства
           OPTIONAL {{ ?node ?p ?o . }}
-        
-          # Удаляем связи, где другие классы указывают на них как на суперкласс
           OPTIONAL {{ ?s rdfs:subClassOf ?node . }}
         }}
 
+    """
+
+
+def update_concept_name_query(concept_uri, new_concept_name):
+    return f"""
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+        DELETE {{
+          <{concept_uri}> rdfs:label ?oldLabel .
+        }}
+        INSERT {{
+          <{concept_uri}> rdfs:label "{new_concept_name}"@en .
+        }}
+        WHERE {{
+          OPTIONAL {{ <{concept_uri}> rdfs:label ?oldLabel . FILTER (lang(?oldLabel) = "en") }}
+        }}
     """

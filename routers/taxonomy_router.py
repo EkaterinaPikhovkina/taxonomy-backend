@@ -10,6 +10,7 @@ from utils.graphdb_utils import (
     add_top_concept_to_graphdb,
     add_subconcept_to_graphdb,
     delete_concept_from_graphdb,
+    update_concept_name_in_graphdb,
 )
 import tempfile
 import os
@@ -33,16 +34,24 @@ class DeleteConceptRequest(BaseModel):
     concept_uri: str
 
 
+class EditConceptNameRequest(BaseModel):
+    concept_uri: str
+    new_concept_name: str
+
+
 @router.get("/taxonomy-tree")
 async def read_taxonomy_tree():
     try:
         bindings = get_taxonomy_hierarchy()
+        print("Debug: read_taxonomy_tree - Получены bindings из get_taxonomy_hierarchy:")
+        print(bindings)
 
         if not bindings:
             return []
         tree_data = build_hierarchy_tree(bindings)
-        print("Результат:")
+        print("Debug: read_taxonomy_tree - Результат build_hierarchy_tree:")
         print(tree_data)
+
         return tree_data
     except HTTPException as e:
         raise e
@@ -110,7 +119,7 @@ async def add_topconcept_endpoint(request: AddTopConceptRequest):
         print(
             f"Debug: concept_uri={concept_uri}, concept_name={concept_name}, definition={definition}")
         add_top_concept_to_graphdb(concept_uri, definition,
-                                     GRAPHDB_ENDPOINT_STATEMENTS)
+                                   GRAPHDB_ENDPOINT_STATEMENTS)
         return {"message": f"Топ концепт '{concept_name}' успішно додано"}
     except HTTPException as e:
         raise e
@@ -144,3 +153,21 @@ async def delete_concept_endpoint(request: DeleteConceptRequest):
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Помилка при видаленні концепту: {e}")
+
+
+@router.post("/edit_concept_name")
+async def edit_concept_name_endpoint(request: EditConceptNameRequest):
+    try:
+        concept_uri = request.concept_uri
+        new_concept_name = request.new_concept_name
+        print(f"Debug: edit_concept_name_endpoint - Получен запрос на изменение имени концепта:")
+        print(f"Debug: edit_concept_name_endpoint - concept_uri={concept_uri}, new_concept_name={new_concept_name}")
+        update_concept_name_in_graphdb(concept_uri, new_concept_name, GRAPHDB_ENDPOINT_STATEMENTS)
+        print(
+            f"Debug: edit_concept_name_endpoint - Функция update_concept_name_in_graphdb вызвана для concept_uri={concept_uri}, new_concept_name={new_concept_name}")
+
+        return {"message": f"Назву концепту '{concept_uri}' успішно змінено на '{new_concept_name}'"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Помилка при зміні назви концепту: {e}")
