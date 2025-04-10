@@ -6,11 +6,11 @@ def get_taxonomy_hierarchy_query():
           
           OPTIONAL {
             ?class rdfs:label ?classLabel .
-            FILTER (lang(?classLabel) = "en")
+            FILTER (lang(?classLabel) = "uk")
           }
           OPTIONAL {
             ?class rdfs:comment ?classComment .
-            FILTER (lang(?classComment) = "en")
+            FILTER (lang(?classComment) = "uk")
           }
         
           OPTIONAL {
@@ -19,11 +19,11 @@ def get_taxonomy_hierarchy_query():
         
             OPTIONAL {
               ?subClass rdfs:label ?subClassLabel .
-              FILTER (lang(?subClassLabel) = "en")
+              FILTER (lang(?subClassLabel) = "uk")
             }
             OPTIONAL {
               ?subClass rdfs:comment ?subClassComment .
-              FILTER (lang(?subClassComment) = "en")
+              FILTER (lang(?subClassComment) = "uk")
             }
           }
         
@@ -118,9 +118,9 @@ def update_concept_name_query(concept_uri, new_concept_name):
           <{concept_uri}> rdfs:label ?oldLabel .
         }}
         INSERT {{
-          <{concept_uri}> rdfs:label "{new_concept_name}"@en .
+          <{concept_uri}> rdfs:label "{new_concept_name}"@uk .
         }}
         WHERE {{
-          OPTIONAL {{ <{concept_uri}> rdfs:label ?oldLabel . FILTER (lang(?oldLabel) = "en") }}
+          OPTIONAL {{ <{concept_uri}> rdfs:label ?oldLabel . FILTER (lang(?oldLabel) = "uk") }}
         }}
     """
