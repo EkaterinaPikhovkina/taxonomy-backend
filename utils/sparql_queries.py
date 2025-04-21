@@ -1,44 +1,94 @@
 def get_taxonomy_hierarchy_query():
     return """
-        SELECT ?class ?classLabel ?classComment ?subClass ?subClassLabel ?subClassComment
-        WHERE {
-          ?class a rdfs:Class .
-          
-          OPTIONAL {
-            ?class rdfs:label ?classLabel .
-            FILTER (lang(?classLabel) = "uk")
-          }
-          OPTIONAL {
-            ?class rdfs:comment ?classComment .
-            FILTER (lang(?classComment) = "uk")
-          }
-        
-          OPTIONAL {
-            ?subClass rdfs:subClassOf ?class .
-            FILTER (?class != ?subClass)
-        
-            OPTIONAL {
-              ?subClass rdfs:label ?subClassLabel .
-              FILTER (lang(?subClassLabel) = "uk")
+            SELECT
+              ?class
+              (GROUP_CONCAT(DISTINCT ?classLabelConcat; SEPARATOR="||") AS ?classLabelsInfo)
+              (GROUP_CONCAT(DISTINCT ?classCommentConcat; SEPARATOR="||") AS ?classCommentsInfo)
+              ?subClass
+              (GROUP_CONCAT(DISTINCT ?subClassLabelConcat; SEPARATOR="||") AS ?subClassLabelsInfo)
+              (GROUP_CONCAT(DISTINCT ?subClassCommentConcat; SEPARATOR="||") AS ?subClassCommentsInfo)
+            WHERE {
+              ?class a rdfs:Class .
+              FILTER STRSTARTS(STR(?class), "http://example.org/taxonomy/") # Adjust namespace if needed
+
+              # --- Class Labels and Comments ---
+              OPTIONAL {
+                ?class rdfs:label ?classLabel .
+                BIND(CONCAT(STR(?classLabel), "|", LANG(?classLabel)) AS ?classLabelConcat)
+              }
+              OPTIONAL {
+                ?class rdfs:comment ?classComment .
+                BIND(CONCAT(STR(?classComment), "|", LANG(?classComment)) AS ?classCommentConcat)
+              }
+
+              # --- SubClass Info (Optional) ---
+              OPTIONAL {
+                ?subClass rdfs:subClassOf ?class .
+                FILTER (?class != ?subClass)
+                FILTER STRSTARTS(STR(?subClass), "http://example.org/taxonomy/") # Adjust namespace
+
+                OPTIONAL {
+                  ?subClass rdfs:label ?subClassLabel .
+                  BIND(CONCAT(STR(?subClassLabel), "|", LANG(?subClassLabel)) AS ?subClassLabelConcat)
+                }
+                OPTIONAL {
+                  ?subClass rdfs:comment ?subClassComment .
+                  BIND(CONCAT(STR(?subClassComment), "|", LANG(?subClassComment)) AS ?subClassCommentConcat)
+                }
+              }
+
+              # FILTER NOT EXISTS {
+              #   ?intermediateClass rdfs:subClassOf ?class ;
+              #                      rdfs:subClassOf ?superClass .
+              #   ?subClass rdfs:subClassOf ?intermediateClass .
+              #   FILTER (?intermediateClass != ?class)
+              #   FILTER (?intermediateClass != ?subClass)
+              # }
             }
-            OPTIONAL {
-              ?subClass rdfs:comment ?subClassComment .
-              FILTER (lang(?subClassComment) = "uk")
-            }
-          }
-        
-          FILTER STRSTARTS(STR(?class), "http://example.org/taxonomy/")
-        
-          FILTER NOT EXISTS {
-            ?intermediateClass rdfs:subClassOf ?class ;
-                               rdfs:subClassOf ?superClass .
-            ?subClass rdfs:subClassOf ?intermediateClass .
-            FILTER (?intermediateClass != ?class)
-            FILTER (?intermediateClass != ?subClass)
-          }
-        }
-        ORDER BY ?class ?subClass
-    """
+            GROUP BY ?class ?subClass # Group to allow GROUP_CONCAT
+            ORDER BY ?class ?subClass
+        """
+
+    # return """
+    #     SELECT ?class ?classLabel ?classComment ?subClass ?subClassLabel ?subClassComment
+    #     WHERE {
+    #       ?class a rdfs:Class .
+    #
+    #       OPTIONAL {
+    #         ?class rdfs:label ?classLabel .
+    #         FILTER (lang(?classLabel) = "uk")
+    #       }
+    #       OPTIONAL {
+    #         ?class rdfs:comment ?classComment .
+    #         FILTER (lang(?classComment) = "uk")
+    #       }
+    #
+    #       OPTIONAL {
+    #         ?subClass rdfs:subClassOf ?class .
+    #         FILTER (?class != ?subClass)
+    #
+    #         OPTIONAL {
+    #           ?subClass rdfs:label ?subClassLabel .
+    #           FILTER (lang(?subClassLabel) = "uk")
+    #         }
+    #         OPTIONAL {
+    #           ?subClass rdfs:comment ?subClassComment .
+    #           FILTER (lang(?subClassComment) = "uk")
+    #         }
+    #       }
+    #
+    #       FILTER STRSTARTS(STR(?class), "http://example.org/taxonomy/")
+    #
+    #       FILTER NOT EXISTS {
+    #         ?intermediateClass rdfs:subClassOf ?class ;
+    #                            rdfs:subClassOf ?superClass .
+    #         ?subClass rdfs:subClassOf ?intermediateClass .
+    #         FILTER (?intermediateClass != ?class)
+    #         FILTER (?intermediateClass != ?subClass)
+    #       }
+    #     }
+    #     ORDER BY ?class ?subClass
+    # """
 
 
 def clear_repository_query():
