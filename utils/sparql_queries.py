@@ -37,58 +37,17 @@ def get_taxonomy_hierarchy_query():
                 }
               }
 
-              # FILTER NOT EXISTS {
-              #   ?intermediateClass rdfs:subClassOf ?class ;
-              #                      rdfs:subClassOf ?superClass .
-              #   ?subClass rdfs:subClassOf ?intermediateClass .
-              #   FILTER (?intermediateClass != ?class)
-              #   FILTER (?intermediateClass != ?subClass)
-              # }
+              FILTER NOT EXISTS {
+                ?intermediateClass rdfs:subClassOf ?class ;
+                                   rdfs:subClassOf ?superClass .
+                ?subClass rdfs:subClassOf ?intermediateClass .
+                FILTER (?intermediateClass != ?class)
+                FILTER (?intermediateClass != ?subClass)
+              }
             }
             GROUP BY ?class ?subClass # Group to allow GROUP_CONCAT
             ORDER BY ?class ?subClass
         """
-
-    # return """
-    #     SELECT ?class ?classLabel ?classComment ?subClass ?subClassLabel ?subClassComment
-    #     WHERE {
-    #       ?class a rdfs:Class .
-    #
-    #       OPTIONAL {
-    #         ?class rdfs:label ?classLabel .
-    #         FILTER (lang(?classLabel) = "uk")
-    #       }
-    #       OPTIONAL {
-    #         ?class rdfs:comment ?classComment .
-    #         FILTER (lang(?classComment) = "uk")
-    #       }
-    #
-    #       OPTIONAL {
-    #         ?subClass rdfs:subClassOf ?class .
-    #         FILTER (?class != ?subClass)
-    #
-    #         OPTIONAL {
-    #           ?subClass rdfs:label ?subClassLabel .
-    #           FILTER (lang(?subClassLabel) = "uk")
-    #         }
-    #         OPTIONAL {
-    #           ?subClass rdfs:comment ?subClassComment .
-    #           FILTER (lang(?subClassComment) = "uk")
-    #         }
-    #       }
-    #
-    #       FILTER STRSTARTS(STR(?class), "http://example.org/taxonomy/")
-    #
-    #       FILTER NOT EXISTS {
-    #         ?intermediateClass rdfs:subClassOf ?class ;
-    #                            rdfs:subClassOf ?superClass .
-    #         ?subClass rdfs:subClassOf ?intermediateClass .
-    #         FILTER (?intermediateClass != ?class)
-    #         FILTER (?intermediateClass != ?subClass)
-    #       }
-    #     }
-    #     ORDER BY ?class ?subClass
-    # """
 
 
 def clear_repository_query():
