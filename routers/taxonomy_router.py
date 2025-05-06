@@ -4,7 +4,7 @@ from utils.graphdb_utils import (
     get_taxonomy_hierarchy,
     build_hierarchy_tree,
     clear_graphdb_repository,
-    GRAPHDB_ENDPOINT_STATEMENTS,
+    GRAPHDB_STATEMENTS_ENDPOINT,
     import_taxonomy_to_graphdb,
     export_taxonomy,
     add_top_concept_to_graphdb,
@@ -17,7 +17,14 @@ import os
 import io
 from pydantic import BaseModel
 
+from typing import List
+import logging
+import traceback
+from utils.llm_utils import generate_taxonomy_with_llm
+
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 class AddSubConceptRequest(BaseModel):
@@ -62,7 +69,7 @@ async def read_taxonomy_tree():
 
 @router.post("/clear_repository")
 async def clear_repository_endpoint():
-    if clear_graphdb_repository(GRAPHDB_ENDPOINT_STATEMENTS):
+    if clear_graphdb_repository(GRAPHDB_STATEMENTS_ENDPOINT):
         return {"message": "Репозиторій успішно очищено"}
     else:
         raise HTTPException(status_code=500, detail="Не вдалося очистити репозиторій")
@@ -79,7 +86,7 @@ async def import_taxonomy_endpoint(file: UploadFile = File(...)):
             tmp_file.write(contents)
             tmp_file_path = tmp_file.name
 
-        import_taxonomy_to_graphdb(tmp_file_path, GRAPHDB_ENDPOINT_STATEMENTS)
+        import_taxonomy_to_graphdb(tmp_file_path, GRAPHDB_STATEMENTS_ENDPOINT)
 
         os.remove(tmp_file_path)
 
@@ -89,6 +96,63 @@ async def import_taxonomy_endpoint(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Помилка при імпорті таксономії: {e}")
+
+
+@router.post("/create_taxonomy_from_corpus_llm")
+async def create_taxonomy_from_corpus_llm_endpoint(files: List[UploadFile] = File(...)):
+    logger.info(f"Request to create taxonomy from corpus with {len(files)} file(s).")
+    corpus_text_parts = []
+    processed_filenames = []
+
+    if not files:
+        raise HTTPException(status_code=400, detail="Не надано жодного файлу.")
+
+    for file in files:
+        if not file.filename.endswith(".txt"):
+            raise HTTPException(status_code=400,
+                                detail=f"Непідтримуваний формат файлу: {file.filename}. Дозволено тільки .txt.")
+        try:
+            contents = await file.read()
+            corpus_text_parts.append(contents.decode('utf-8'))
+            processed_filenames.append(file.filename)
+        except Exception as e:
+            logger.error(f"Error reading file {file.filename}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Помилка читання файлу {file.filename}: {e}")
+
+    combined_corpus_text = "\n\n--- НОВИЙ ФАЙЛ ---\n\n".join(corpus_text_parts)
+
+    if not combined_corpus_text.strip():
+        raise HTTPException(status_code=400, detail="Надані файли порожні або не містять тексту.")
+
+    logger.info(
+        f"Combined corpus text from {len(processed_filenames)} files ({', '.join(processed_filenames)}), length: {len(combined_corpus_text)} chars.")
+
+    try:
+        ttl_taxonomy_data_str = await generate_taxonomy_with_llm(combined_corpus_text)
+
+        if not ttl_taxonomy_data_str or not ttl_taxonomy_data_str.strip().startswith("@prefix"):
+            logger.error(f"LLM did not return valid TTL data. Response: {ttl_taxonomy_data_str[:500]}")
+            raise HTTPException(status_code=500, detail="ЛЛМ не згенерувала валідну таксономію у форматі TTL.")
+
+        ttl_taxonomy_bytes = ttl_taxonomy_data_str.encode('utf-8')
+
+        import_taxonomy_to_graphdb(
+            file_path=None,  # Not using file_path
+            graphdb_endpoint_statements=GRAPHDB_STATEMENTS_ENDPOINT,
+            file_content_bytes=ttl_taxonomy_bytes,
+            content_type='application/x-turtle'  # LLM output is TTL
+        )
+        logger.info("Taxonomy from LLM imported successfully into GraphDB.")
+        return JSONResponse(content={"message": "Таксономія успішно створена з корпусу документів та імпортована."})
+
+    except ValueError as ve:  # Catch specific errors from LLM util
+        logger.error(f"ValueError from LLM processing: {ve}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Помилка генерації таксономії ЛЛМ: {ve}")
+    except HTTPException as e:  # Re-raise known HTTPExceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during LLM taxonomy creation: {e}\n{traceback.format_exc()}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Неочікувана помилка при створенні таксономії з корпусу: {e}")
 
 
 @router.get("/export_taxonomy")
@@ -119,7 +183,7 @@ async def add_topconcept_endpoint(request: AddTopConceptRequest):
         print(
             f"Debug: concept_uri={concept_uri}, concept_name={concept_name}, definition={definition}")
         add_top_concept_to_graphdb(concept_uri, definition,
-                                   GRAPHDB_ENDPOINT_STATEMENTS)
+                                   GRAPHDB_STATEMENTS_ENDPOINT)
         return {"message": f"Топ концепт '{concept_name}' успішно додано"}
     except HTTPException as e:
         raise e
@@ -135,7 +199,7 @@ async def add_subconcept_endpoint(request: AddSubConceptRequest):
         concept_uri = f"http://example.org/taxonomy/{concept_name}"
         print(f"Debug: concept_uri={concept_uri}, concept_name={concept_name}, parent_concept_uri={parent_concept_uri}")
         add_subconcept_to_graphdb(concept_uri, parent_concept_uri,
-                                  GRAPHDB_ENDPOINT_STATEMENTS)
+                                  GRAPHDB_STATEMENTS_ENDPOINT)
         return {"message": f"Концепт '{concept_name}' успішно додано"}
     except HTTPException as e:
         raise e
@@ -147,7 +211,7 @@ async def add_subconcept_endpoint(request: AddSubConceptRequest):
 async def delete_concept_endpoint(request: DeleteConceptRequest):
     try:
         concept_uri = request.concept_uri
-        delete_concept_from_graphdb(concept_uri, GRAPHDB_ENDPOINT_STATEMENTS)
+        delete_concept_from_graphdb(concept_uri, GRAPHDB_STATEMENTS_ENDPOINT)
         return {"message": f"Концепт '{concept_uri}' успішно видалено"}
     except HTTPException as e:
         raise e
@@ -162,7 +226,7 @@ async def edit_concept_name_endpoint(request: EditConceptNameRequest):
         new_concept_name = request.new_concept_name
         print(f"Debug: edit_concept_name_endpoint - Получен запрос на изменение имени концепта:")
         print(f"Debug: edit_concept_name_endpoint - concept_uri={concept_uri}, new_concept_name={new_concept_name}")
-        update_concept_name_in_graphdb(concept_uri, new_concept_name, GRAPHDB_ENDPOINT_STATEMENTS)
+        update_concept_name_in_graphdb(concept_uri, new_concept_name, GRAPHDB_STATEMENTS_ENDPOINT)
         print(
             f"Debug: edit_concept_name_endpoint - Функция update_concept_name_in_graphdb вызвана для concept_uri={concept_uri}, new_concept_name={new_concept_name}")
 

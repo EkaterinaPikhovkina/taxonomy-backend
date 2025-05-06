@@ -1,6 +1,9 @@
 from fastapi import HTTPException
-from SPARQLWrapper import SPARQLWrapper, JSON, TURTLE, RDFXML
+from SPARQLWrapper import SPARQLWrapper, JSON, TURTLE
 import requests
+import os
+from dotenv import load_dotenv
+import logging
 
 from utils.sparql_queries import (
     clear_repository_query,
@@ -12,8 +15,16 @@ from utils.sparql_queries import (
     update_concept_name_query,
 )
 
-GRAPHDB_ENDPOINT_QUERY = "http://localhost:7200/repositories/animals"
-GRAPHDB_ENDPOINT_STATEMENTS = "http://localhost:7200/repositories/animals/statements"
+load_dotenv()
+logger = logging.getLogger(__name__)
+
+GRAPHDB_BASE_URL = os.getenv("GRAPHDB_BASE_URL", "http://localhost:7200")
+GRAPHDB_REPOSITORY = os.getenv("GRAPHDB_REPOSITORY", "animals")
+
+GRAPHDB_QUERY_ENDPOINT = os.getenv("GRAPHDB_ENDPOINT_QUERY", f"{GRAPHDB_BASE_URL}/repositories/{GRAPHDB_REPOSITORY}")
+GRAPHDB_STATEMENTS_ENDPOINT = (
+    os.getenv("GRAPHDB_ENDPOINT_STATEMENTS", f"{GRAPHDB_BASE_URL}/repositories/{GRAPHDB_REPOSITORY}/statements"))
+DEFAULT_GRAPH_URI = os.getenv("GRAPHDB_DEFAULT_GRAPH", "http://example.org/graph/taxonomy")
 
 
 def parse_concat_results(concat_string):
@@ -48,7 +59,7 @@ def get_preferred_label(labels_info, preferred_lang="uk"):
 
 
 def get_taxonomy_hierarchy():
-    sparql = SPARQLWrapper(GRAPHDB_ENDPOINT_QUERY)
+    sparql = SPARQLWrapper(GRAPHDB_QUERY_ENDPOINT)
     sparql.setQuery(get_taxonomy_hierarchy_query())
     sparql.setReturnFormat(JSON)
 
@@ -255,32 +266,65 @@ def clear_graphdb_repository(graphdb_endpoint):
         return False
 
 
-def import_taxonomy_to_graphdb(file_path, graphdb_endpoint):
-    try:
+def import_taxonomy_to_graphdb(file_path, graphdb_endpoint_statements, file_content_bytes=None, content_type=None):
+    logger.info(f"Importing taxonomy to GraphDB endpoint: {graphdb_endpoint_statements}, graph: <{DEFAULT_GRAPH_URI}>")
+    headers = {}
+    data_to_send = None
+
+    if file_content_bytes and content_type:
+        data_to_send = file_content_bytes
+        headers['Content-Type'] = content_type
+        logger.debug(f"Importing from byte content, type: {content_type}")
+    elif file_path:
+        logger.debug(f"Importing from file: {file_path}")
         with open(file_path, 'rb') as f:
-            data = f.read()
-
-        headers = {}
-
+            data_to_send = f.read()
         if file_path.endswith('.ttl'):
             headers['Content-Type'] = 'text/turtle'
-        elif file_path.endswith('.rdf'):
-            headers['Content-Type'] = 'application/rdf+xml'
         else:
-            raise ValueError("Непідтримуваний формат файлу для імпорту")
+            raise ValueError("Непідтримуваний формат файлу для імпорту (тільки .ttl)")
+    else:
+        raise ValueError("Необхідно вказати або шлях до файлу, або вміст файлу для імпорту.")
 
-        response = requests.post(graphdb_endpoint, data=data, headers=headers)
+    # Add named graph URI to the import URL parameters
+    params = {'context': f'<{DEFAULT_GRAPH_URI}>'}
 
-        if response.status_code != 204 and response.status_code != 200:
-            raise Exception(
-                f"Помилка імпорту в GraphDB. Статус код: {response.status_code}, Відповідь: {response.text}")
+    try:
+        response = requests.post(graphdb_endpoint_statements, data=data_to_send, headers=headers, params=params)
+        response.raise_for_status()
+        logger.info(f"Taxonomy imported successfully to GraphDB (status {response.status_code}).")
+    except requests.exceptions.RequestException as e:
+        error_detail = f"Помилка імпорту в GraphDB: {e}. Статус: {e.response.status_code if 'response' in locals() else 'N/A'}. Відповідь: {response.text if 'response' in locals() and e.response.text else 'N/A'}"
+        logger.error(error_detail, exc_info=True)
+        raise HTTPException(status_code=500, detail=error_detail)
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+# def import_taxonomy_to_graphdb(file_path, graphdb_endpoint):
+#     try:
+#         with open(file_path, 'rb') as f:
+#             data = f.read()
+#
+#         headers = {}
+#
+#         if file_path.endswith('.ttl'):
+#             headers['Content-Type'] = 'text/turtle'
+#         elif file_path.endswith('.rdf'):
+#             headers['Content-Type'] = 'application/rdf+xml'
+#         else:
+#             raise ValueError("Непідтримуваний формат файлу для імпорту")
+#
+#         response = requests.post(graphdb_endpoint, data=data, headers=headers)
+#
+#         if response.status_code != 204 and response.status_code != 200:
+#             raise Exception(
+#                 f"Помилка імпорту в GraphDB. Статус код: {response.status_code}, Відповідь: {response.text}")
+#
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
 def export_taxonomy(format_str):
-    sparql = SPARQLWrapper(GRAPHDB_ENDPOINT_QUERY)
+    sparql = SPARQLWrapper(GRAPHDB_QUERY_ENDPOINT)
     sparql.setQuery(export_taxonomy_query())
 
     if format_str == "ttl":
