@@ -9,15 +9,14 @@ from utils.graphdb_utils import (
     export_taxonomy,
     add_top_concept_to_graphdb,
     add_subconcept_to_graphdb,
-    delete_concept_from_graphdb,
-    update_concept_name_in_graphdb,
+    delete_concept_from_graphdb, add_rdfs_label_to_graphdb, delete_rdfs_label_from_graphdb, add_rdfs_comment_to_graphdb,
+    delete_rdfs_comment_from_graphdb,
 )
 import tempfile
 import os
 import io
 from pydantic import BaseModel
-
-from typing import List
+from typing import List, Optional
 import logging
 import traceback
 from utils.llm_utils import generate_taxonomy_with_llm
@@ -34,16 +33,26 @@ class AddSubConceptRequest(BaseModel):
 
 class AddTopConceptRequest(BaseModel):
     concept_name: str
-    definition: str = None
 
 
 class DeleteConceptRequest(BaseModel):
     concept_uri: str
 
 
-class EditConceptNameRequest(BaseModel):
+class LiteralData(BaseModel):
+    value: str
+    lang: Optional[str] = None
+
+
+class ConceptLiteralRequest(BaseModel):
     concept_uri: str
-    new_concept_name: str
+    literal: LiteralData
+
+
+class ConceptLiteralUpdateRequest(BaseModel):
+    concept_uri: str
+    old_literal: LiteralData
+    new_literal: LiteralData
 
 
 @router.get("/taxonomy-tree")
@@ -178,12 +187,10 @@ async def export_taxonomy_endpoint(format: str = Query(..., regex="^(ttl|rdf)$")
 async def add_topconcept_endpoint(request: AddTopConceptRequest):
     try:
         concept_name = request.concept_name
-        definition = request.definition
         concept_uri = f"http://example.org/taxonomy/{concept_name}"
         print(
-            f"Debug: concept_uri={concept_uri}, concept_name={concept_name}, definition={definition}")
-        add_top_concept_to_graphdb(concept_uri, definition,
-                                   GRAPHDB_STATEMENTS_ENDPOINT)
+            f"Debug: concept_uri={concept_uri}, concept_name={concept_name}")
+        add_top_concept_to_graphdb(concept_uri, GRAPHDB_STATEMENTS_ENDPOINT)
         return {"message": f"Топ концепт '{concept_name}' успішно додано"}
     except HTTPException as e:
         raise e
@@ -219,19 +226,129 @@ async def delete_concept_endpoint(request: DeleteConceptRequest):
         raise HTTPException(status_code=500, detail=f"Помилка при видаленні концепту: {e}")
 
 
-@router.post("/edit_concept_name")
-async def edit_concept_name_endpoint(request: EditConceptNameRequest):
+@router.post("/add_concept_label")
+async def add_concept_label_endpoint(request: ConceptLiteralRequest):
     try:
-        concept_uri = request.concept_uri
-        new_concept_name = request.new_concept_name
-        print(f"Debug: edit_concept_name_endpoint - Получен запрос на изменение имени концепта:")
-        print(f"Debug: edit_concept_name_endpoint - concept_uri={concept_uri}, new_concept_name={new_concept_name}")
-        update_concept_name_in_graphdb(concept_uri, new_concept_name, GRAPHDB_STATEMENTS_ENDPOINT)
-        print(
-            f"Debug: edit_concept_name_endpoint - Функция update_concept_name_in_graphdb вызвана для concept_uri={concept_uri}, new_concept_name={new_concept_name}")
-
-        return {"message": f"Назву концепту '{concept_uri}' успішно змінено на '{new_concept_name}'"}
+        logger.debug(f"Adding label to {request.concept_uri}: '{request.literal.value}'@{request.literal.lang}")
+        add_rdfs_label_to_graphdb(
+            concept_uri=request.concept_uri,
+            label_value=request.literal.value,
+            label_lang=request.literal.lang,
+            graphdb_endpoint=GRAPHDB_STATEMENTS_ENDPOINT
+        )
+        return {"message": f"Мітку '{request.literal.value}' успішно додано до концепту '{request.concept_uri}'"}
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Помилка при зміні назви концепту: {e}")
+        logger.error(f"Error adding concept label: {e}\n{traceback.format_exc()}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Помилка при додаванні мітки концепту: {e}")
+
+
+@router.post("/delete_concept_label")
+async def delete_concept_label_endpoint(request: ConceptLiteralRequest):
+    try:
+        logger.debug(f"Deleting label from {request.concept_uri}: '{request.literal.value}'@{request.literal.lang}")
+        delete_rdfs_label_from_graphdb(
+            concept_uri=request.concept_uri,
+            label_value=request.literal.value,
+            label_lang=request.literal.lang,
+            graphdb_endpoint=GRAPHDB_STATEMENTS_ENDPOINT
+        )
+        return {"message": f"Мітку '{request.literal.value}' успішно видалено з концепту '{request.concept_uri}'"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error deleting concept label: {e}\n{traceback.format_exc()}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Помилка при видаленні мітки концепту: {e}")
+
+
+@router.post("/update_concept_label")
+async def update_concept_label_endpoint(request: ConceptLiteralUpdateRequest):
+    try:
+        logger.debug(
+            f"Updating label for {request.concept_uri}: old='{request.old_literal.value}'@{request.old_literal.lang}, new='{request.new_literal.value}'@{request.new_literal.lang}")
+        # Step 1: Delete the old label
+        delete_rdfs_label_from_graphdb(
+            concept_uri=request.concept_uri,
+            label_value=request.old_literal.value,
+            label_lang=request.old_literal.lang,
+            graphdb_endpoint=GRAPHDB_STATEMENTS_ENDPOINT
+        )
+        # Step 2: Add the new label
+        add_rdfs_label_to_graphdb(
+            concept_uri=request.concept_uri,
+            label_value=request.new_literal.value,
+            label_lang=request.new_literal.lang,
+            graphdb_endpoint=GRAPHDB_STATEMENTS_ENDPOINT
+        )
+        return {"message": f"Мітку для концепту '{request.concept_uri}' успішно оновлено"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error updating concept label: {e}\n{traceback.format_exc()}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Помилка при оновленні мітки концепту: {e}")
+
+
+# Endpoints for Definitions (rdfs:comment)
+@router.post("/add_concept_definition")
+async def add_concept_definition_endpoint(request: ConceptLiteralRequest):
+    try:
+        logger.debug(f"Adding definition to {request.concept_uri}: '{request.literal.value}'@{request.literal.lang}")
+        add_rdfs_comment_to_graphdb(
+            concept_uri=request.concept_uri,
+            comment_value=request.literal.value,
+            comment_lang=request.literal.lang,
+            graphdb_endpoint=GRAPHDB_STATEMENTS_ENDPOINT
+        )
+        return {"message": f"Визначення успішно додано до концепту '{request.concept_uri}'"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error adding concept definition: {e}\n{traceback.format_exc()}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Помилка при додаванні визначення концепту: {e}")
+
+
+@router.post("/delete_concept_definition")
+async def delete_concept_definition_endpoint(request: ConceptLiteralRequest):
+    try:
+        logger.debug(
+            f"Deleting definition from {request.concept_uri}: '{request.literal.value}'@{request.literal.lang}")
+        delete_rdfs_comment_from_graphdb(
+            concept_uri=request.concept_uri,
+            comment_value=request.literal.value,
+            comment_lang=request.literal.lang,
+            graphdb_endpoint=GRAPHDB_STATEMENTS_ENDPOINT
+        )
+        return {"message": f"Визначення успішно видалено з концепту '{request.concept_uri}'"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error deleting concept definition: {e}\n{traceback.format_exc()}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Помилка при видаленні визначення концепту: {e}")
+
+
+@router.post("/update_concept_definition")
+async def update_concept_definition_endpoint(request: ConceptLiteralUpdateRequest):
+    try:
+        logger.debug(
+            f"Updating definition for {request.concept_uri}: old='{request.old_literal.value}'@{request.old_literal.lang}, new='{request.new_literal.value}'@{request.new_literal.lang}")
+        # Step 1: Delete the old definition
+        delete_rdfs_comment_from_graphdb(
+            concept_uri=request.concept_uri,
+            comment_value=request.old_literal.value,
+            comment_lang=request.old_literal.lang,
+            graphdb_endpoint=GRAPHDB_STATEMENTS_ENDPOINT
+        )
+        # Step 2: Add the new definition
+        add_rdfs_comment_to_graphdb(
+            concept_uri=request.concept_uri,
+            comment_value=request.new_literal.value,
+            comment_lang=request.new_literal.lang,
+            graphdb_endpoint=GRAPHDB_STATEMENTS_ENDPOINT
+        )
+        return {"message": f"Визначення для концепту '{request.concept_uri}' успішно оновлено"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error updating concept definition: {e}\n{traceback.format_exc()}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Помилка при оновленні визначення концепту: {e}")

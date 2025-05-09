@@ -71,11 +71,7 @@ def export_taxonomy_query():
     """
 
 
-def add_top_concept_query(concept_uri, definition):
-    definition_statement = ""
-    if definition:
-        definition_statement = f"""<{concept_uri}> rdfs:comment "{definition}" ."""
-
+def add_top_concept_query(concept_uri):
     return f"""
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -83,7 +79,6 @@ def add_top_concept_query(concept_uri, definition):
 
         INSERT DATA {{
           <{concept_uri}> rdf:type rdfs:Class .
-          {definition_statement}
         }}
     """
 
@@ -119,17 +114,66 @@ def delete_concept_query(concept_uri):
     """
 
 
-def update_concept_name_query(concept_uri, new_concept_name):
+def _escape_sparql_literal_value(value: str) -> str:
+    """Escapes double quotes and backslashes for SPARQL literals."""
+    if value is None:
+        return ""
+    # Replace backslashes first, then double quotes
+    return value.replace('\\', '\\\\').replace('"', '\\"')
+
+
+def add_rdfs_label_query(concept_uri, label_value, label_lang):
+    escaped_label_value = _escape_sparql_literal_value(label_value)
+    if label_lang and label_lang.strip():
+        label_triple = f'<{concept_uri}> rdfs:label "{escaped_label_value}"@{label_lang} .'
+    else:
+        label_triple = f'<{concept_uri}> rdfs:label "{escaped_label_value}" .'
+
     return f"""
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        INSERT DATA {{
+          {label_triple}
+        }}
+    """
 
-        DELETE {{
-          <{concept_uri}> rdfs:label ?oldLabel .
+
+def delete_rdfs_label_query(concept_uri, label_value, label_lang):
+    escaped_label_value = _escape_sparql_literal_value(label_value)
+    if label_lang and label_lang.strip():
+        literal_to_delete = f'"{escaped_label_value}"@{label_lang}'
+    else:
+        literal_to_delete = f'"{escaped_label_value}"'
+    return f"""
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        DELETE DATA {{
+          <{concept_uri}> rdfs:label {literal_to_delete} .
         }}
-        INSERT {{
-          <{concept_uri}> rdfs:label "{new_concept_name}"@uk .
+    """
+
+
+def add_rdfs_comment_query(concept_uri, comment_value, comment_lang):
+    escaped_comment_value = _escape_sparql_literal_value(comment_value)
+    if comment_lang and comment_lang.strip():
+        comment_triple = f'<{concept_uri}> rdfs:comment "{escaped_comment_value}"@{comment_lang} .'
+    else:
+        comment_triple = f'<{concept_uri}> rdfs:comment "{escaped_comment_value}" .'
+    return f"""
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        INSERT DATA {{
+          {comment_triple}
         }}
-        WHERE {{
-          OPTIONAL {{ <{concept_uri}> rdfs:label ?oldLabel . FILTER (lang(?oldLabel) = "uk") }}
+    """
+
+
+def delete_rdfs_comment_query(concept_uri, comment_value, comment_lang):
+    escaped_comment_value = _escape_sparql_literal_value(comment_value)
+    if comment_lang and comment_lang.strip():
+        literal_to_delete = f'"{escaped_comment_value}"@{comment_lang}'
+    else:
+        literal_to_delete = f'"{escaped_comment_value}"'
+    return f"""
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        DELETE DATA {{
+          <{concept_uri}> rdfs:comment {literal_to_delete} .
         }}
     """

@@ -1,9 +1,12 @@
+from typing import Optional
+
 from fastapi import HTTPException
 from SPARQLWrapper import SPARQLWrapper, JSON, TURTLE
 import requests
 import os
 from dotenv import load_dotenv
 import logging
+from urllib.parse import urlparse
 
 from utils.sparql_queries import (
     clear_repository_query,
@@ -11,8 +14,9 @@ from utils.sparql_queries import (
     export_taxonomy_query,
     add_subconcept_query,
     add_top_concept_query,
-    delete_concept_query,
-    update_concept_name_query,
+    delete_concept_query, add_rdfs_label_query, delete_rdfs_label_query, add_rdfs_comment_query,
+    delete_rdfs_comment_query,
+    # update_concept_name_query,
 )
 
 load_dotenv()
@@ -34,28 +38,43 @@ def parse_concat_results(concat_string):
         return results
     pairs = concat_string.split('||')
     for pair in pairs:
-        parts = pair.split('|', 1) # Split only once
+        parts = pair.split('|', 1)
         if len(parts) == 2:
             value, lang = parts
             results.append({"value": value, "lang": lang if lang else None})
-        elif len(parts) == 1: # Handle case with value but no language tag
-             results.append({"value": parts[0], "lang": None})
-    # Remove duplicates if necessary (SPARQL GROUP_CONCAT DISTINCT should handle this)
-    # unique_results = { (item['value'], item['lang']): item for item in results }.values()
-    # return list(unique_results)
+        elif len(parts) == 1:
+            results.append({"value": parts[0], "lang": None})
     return results
 
 
-def get_preferred_label(labels_info, preferred_lang="uk"):
-    """Gets the preferred language label, falls back to others or URI part."""
-    if not labels_info:
-        return None
-    labels = parse_concat_results(labels_info)
-    for label in labels:
-        if label["lang"] == preferred_lang:
-            return label["value"]
-    # Fallback: first available label or None
-    return labels[0]["value"] if labels else None
+def get_uri_display_name(uri_string: str) -> str:
+    if not uri_string:
+        return ""
+    try:
+        parsed_uri = urlparse(uri_string)
+        if parsed_uri.fragment:
+            return parsed_uri.fragment
+
+        path = parsed_uri.path.strip('/')
+        if path:
+            return path.split('/')[-1]
+
+        # Fallback for URNs or pathless URIs after host
+        if parsed_uri.netloc and not path and not parsed_uri.fragment:  # e.g. http://example.com
+            # could use netloc, or decide this is not a good display name
+            pass  # Let it fall to raw string split
+
+    except ValueError:  # If URI is malformed and urlparse fails
+        pass  # Fall through to simple string manipulation
+
+    # Fallback for non-standard URIs or if parsing didn't yield a good segment
+    parts = uri_string.split('/')
+    last_part = parts[-1]
+    if last_part:
+        return last_part
+    if len(parts) > 1 and parts[-2]:  # Handle trailing slash
+        return parts[-2]
+    return uri_string  # Absolute fallback
 
 
 def get_taxonomy_hierarchy():
@@ -71,13 +90,13 @@ def get_taxonomy_hierarchy():
         return results["results"]["bindings"]
     except Exception as e:
         print(f"Error querying GraphDB: {e}")
-        print(f"Query used:\n{get_taxonomy_hierarchy_query()}")  # Print query on error
+        print(f"Query used:\n{get_taxonomy_hierarchy_query()}")
         raise HTTPException(status_code=500, detail=f"Ошибка при запросе к GraphDB: {e}")
 
 
 def build_hierarchy_tree(bindings):
     nodes = {}
-    parent_child_links = {} # Store parent-child URI links { child_uri: parent_uri }
+    parent_child_links = {}
     all_uris = set()
 
     print("Debug: build_hierarchy_tree - Processing bindings...")
@@ -89,48 +108,47 @@ def build_hierarchy_tree(bindings):
         class_labels_info = binding.get("classLabelsInfo", {}).get("value")
         class_comments_info = binding.get("classCommentsInfo", {}).get("value")
 
-        # Use preferred language for title, store all labels/definitions
-        preferred_class_label = get_preferred_label(class_labels_info, "uk") or class_uri.split('/')[-1]
+        # preferred_class_label = get_preferred_label(class_labels_info, "uk") or class_uri.split('/')[-1]
         class_definitions = parse_concat_results(class_comments_info)
-        all_class_labels = parse_concat_results(class_labels_info) # Store all labels too
+        all_class_labels = parse_concat_results(class_labels_info)
+        class_title = get_uri_display_name(class_uri)
 
         if class_uri not in nodes:
             nodes[class_uri] = {
                 "key": class_uri,
-                "title": preferred_class_label,
+                "title": class_title,
                 "children": [],
                 "definitions": class_definitions,
-                 "labels": all_class_labels # Add labels here
-                # "definition": class_definitions[0]['value'] if class_definitions else None # Old single definition
+                "labels": all_class_labels
             }
-        else: # Update existing node if needed (e.g., if seen as a subclass first)
-            nodes[class_uri]["title"] = preferred_class_label
+        else:
+            nodes[class_uri]["title"] = class_title
             nodes[class_uri]["definitions"] = class_definitions
             nodes[class_uri]["labels"] = all_class_labels
-
 
         if "subClass" in binding and binding["subClass"]["value"]:
             subclass_uri = binding["subClass"]["value"]
             all_uris.add(subclass_uri)
-            parent_child_links[subclass_uri] = class_uri # Record link
+            parent_child_links[subclass_uri] = class_uri
 
             subclass_labels_info = binding.get("subClassLabelsInfo", {}).get("value")
             subclass_comments_info = binding.get("subClassCommentsInfo", {}).get("value")
 
-            preferred_subclass_label = get_preferred_label(subclass_labels_info, "uk") or subclass_uri.split('/')[-1]
+            # preferred_subclass_label = get_preferred_label(subclass_labels_info, "uk") or subclass_uri.split('/')[-1]
             subclass_definitions = parse_concat_results(subclass_comments_info)
             all_subclass_labels = parse_concat_results(subclass_labels_info)
+            subclass_title = get_uri_display_name(subclass_uri)
 
             if subclass_uri not in nodes:
-                 nodes[subclass_uri] = {
+                nodes[subclass_uri] = {
                     "key": subclass_uri,
-                    "title": preferred_subclass_label,
+                    "title": subclass_title,
                     "children": [],
                     "definitions": subclass_definitions,
                     "labels": all_subclass_labels
-                 }
-            else: # Update existing node
-                nodes[subclass_uri]["title"] = preferred_subclass_label
+                }
+            else:
+                nodes[subclass_uri]["title"] = subclass_title
                 nodes[subclass_uri]["definitions"] = subclass_definitions
                 nodes[subclass_uri]["labels"] = all_subclass_labels
 
@@ -140,110 +158,39 @@ def build_hierarchy_tree(bindings):
 
     # Populate children arrays based on recorded links
     for child_uri, parent_uri in parent_child_links.items():
-         if parent_uri in nodes and child_uri in nodes:
-              # Ensure child is not already added (can happen with complex SPARQL results)
-              if nodes[child_uri] not in nodes[parent_uri]["children"]:
-                   nodes[parent_uri]["children"].append(nodes[child_uri])
-                   processed_children.add(child_uri)
-              else:
-                   print(f"Debug: Child {child_uri} already in parent {parent_uri}, skipping duplicate add.")
-         else:
-              print(f"Warning: Parent {parent_uri} or Child {child_uri} not found in nodes dict during linking.")
+        if parent_uri in nodes and child_uri in nodes:
+            if nodes[child_uri] not in nodes[parent_uri]["children"]:
+                nodes[parent_uri]["children"].append(nodes[child_uri])
+                processed_children.add(child_uri)
+            else:
+                print(f"Debug: Child {child_uri} already in parent {parent_uri}, skipping duplicate add.")
+        else:
+            print(f"Warning: Parent {parent_uri} or Child {child_uri} not found in nodes dict during linking.")
 
-
-    # Identify root nodes (those not present as children)
     for uri in all_uris:
-        if uri not in parent_child_links: # If a node is never a child, it's a root
+        if uri not in parent_child_links:
             if uri in nodes:
                 root_nodes.append(nodes[uri])
             else:
-                 print(f"Warning: Potential root node {uri} not found in nodes dictionary.")
+                print(f"Warning: Potential root node {uri} not found in nodes dictionary.")
 
-
-    # Handle potential orphans (nodes created but not linked and not identified as roots)
-    # This might indicate issues in SPARQL or linking logic
     all_node_uris = set(nodes.keys())
     linked_uris = set(parent_child_links.keys()) | set(parent_child_links.values())
     identified_root_uris = {node['key'] for node in root_nodes}
     orphans = all_node_uris - linked_uris - identified_root_uris
     if orphans:
-         print(f"Warning: Found potential orphan nodes (not linked, not root): {orphans}")
-         # Decide how to handle orphans, e.g., add them as roots
-         # for orphan_uri in orphans:
-         #      if orphan_uri in nodes:
-         #          root_nodes.append(nodes[orphan_uri])
-
+        print(f"Warning: Found potential orphan nodes (not linked, not root): {orphans}")
+        # for orphan_uri in orphans:
+        #      if orphan_uri in nodes:
+        #          root_nodes.append(nodes[orphan_uri])
 
     print(f"Debug: build_hierarchy_tree - Identified {len(root_nodes)} root nodes.")
     # print("Debug: build_hierarchy_tree - Final tree structure (roots):")
-    # print(root_nodes) # Can be very verbose
+    # print(root_nodes)
     return root_nodes
 
 
-# def build_hierarchy_tree(bindings):
-#     nodes = {}
-#     root_nodes = []
-#     print("Debug: build_hierarchy_tree - Входящие bindings:")
-#     print(bindings)
-#
-#     for binding in bindings:
-#         class_uri = binding["class"]["value"]
-#         class_label = binding.get("classLabel", {}).get("value")
-#         class_comment = binding.get("classComment", {}).get("value")
-#
-#         print(f"Debug: build_hierarchy_tree - Обработка концепта: class_uri={class_uri}, label={class_label}")
-#
-#         if class_uri not in nodes:
-#             nodes[class_uri] = {
-#                 "key": class_uri,
-#                 "title": class_label if class_label else class_uri.split('/')[-1],
-#                 "children": [],
-#                 "definition": class_comment if class_comment else None,
-#             }
-#
-#         print(f"Debug: build_hierarchy_tree - Создан узел: key={nodes[class_uri]['key']}, title={nodes[class_uri]['title']}")
-#
-#         if "subClass" in binding:
-#             subclass_uri = binding["subClass"]["value"]
-#             subclass_label = binding.get("subClassLabel", {}).get("value")
-#             subclass_comment = binding.get("subClassComment", {}).get("value")
-#
-#             print(f"Debug: build_hierarchy_tree - Обнаружен подкласс: subclass_uri={subclass_uri}, subclass_label={subclass_label}")
-#
-#             if subclass_uri not in nodes:
-#                 nodes[subclass_uri] = {
-#                     "key": subclass_uri,
-#                     "title": subclass_label if subclass_label else subclass_uri.split('/')[-1],
-#                     "children": [],
-#                     "definition": subclass_comment if subclass_comment else None,
-#                 }
-#
-#             print(f"Debug: build_hierarchy_tree - Создан узел подкласса: key={nodes[subclass_uri]['key']}, title={nodes[subclass_uri]['title']}")
-#
-#             nodes[class_uri]["children"].append(nodes[subclass_uri])
-#             print(f"Debug: build_hierarchy_tree - Подкласс добавлен к родителю: parent_uri={class_uri}, child_uri={subclass_uri}")
-#         else:
-#             root_nodes.append(nodes[class_uri])
-#             print(f"Debug: build_hierarchy_tree - Корневой узел добавлен: uri={class_uri}")
-#
-#     real_root_nodes = []
-#     is_subclass = set()
-#     for node_uri in nodes:
-#         for child in nodes[node_uri]["children"]:
-#             is_subclass.add(child["key"])
-#
-#     for node_uri in nodes:
-#         if node_uri not in is_subclass:
-#             real_root_nodes.append(nodes[node_uri])
-#             print(f"Debug: build_hierarchy_tree - Реальный корневой узел добавлен: uri={node_uri}")
-#
-#     print("Debug: build_hierarchy_tree - Возвращаемые real_root_nodes:")
-#     print(real_root_nodes)
-#     return real_root_nodes
-
-
 def clear_graphdb_repository(graphdb_endpoint):
-
     clear_query = clear_repository_query()
     print("SPARQL Query being sent (in POST body):", clear_query)
 
@@ -286,7 +233,6 @@ def import_taxonomy_to_graphdb(file_path, graphdb_endpoint_statements, file_cont
     else:
         raise ValueError("Необхідно вказати або шлях до файлу, або вміст файлу для імпорту.")
 
-    # Add named graph URI to the import URL parameters
     params = {'context': f'<{DEFAULT_GRAPH_URI}>'}
 
     try:
@@ -297,30 +243,6 @@ def import_taxonomy_to_graphdb(file_path, graphdb_endpoint_statements, file_cont
         error_detail = f"Помилка імпорту в GraphDB: {e}. Статус: {e.response.status_code if 'response' in locals() else 'N/A'}. Відповідь: {response.text if 'response' in locals() and e.response.text else 'N/A'}"
         logger.error(error_detail, exc_info=True)
         raise HTTPException(status_code=500, detail=error_detail)
-
-
-# def import_taxonomy_to_graphdb(file_path, graphdb_endpoint):
-#     try:
-#         with open(file_path, 'rb') as f:
-#             data = f.read()
-#
-#         headers = {}
-#
-#         if file_path.endswith('.ttl'):
-#             headers['Content-Type'] = 'text/turtle'
-#         elif file_path.endswith('.rdf'):
-#             headers['Content-Type'] = 'application/rdf+xml'
-#         else:
-#             raise ValueError("Непідтримуваний формат файлу для імпорту")
-#
-#         response = requests.post(graphdb_endpoint, data=data, headers=headers)
-#
-#         if response.status_code != 204 and response.status_code != 200:
-#             raise Exception(
-#                 f"Помилка імпорту в GraphDB. Статус код: {response.status_code}, Відповідь: {response.text}")
-#
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
 
 
 def export_taxonomy(format_str):
@@ -339,8 +261,8 @@ def export_taxonomy(format_str):
         raise HTTPException(status_code=500, detail=f"Помилка при експорті з GraphDB: {e}")
 
 
-def add_top_concept_to_graphdb(concept_uri, definition, graphdb_endpoint):
-    sparql_query = add_top_concept_query(concept_uri, definition)
+def add_top_concept_to_graphdb(concept_uri, graphdb_endpoint):
+    sparql_query = add_top_concept_query(concept_uri)
     print("SPARQL Query being sent for add top concept:", sparql_query)
 
     headers = {'Content-Type': 'application/sparql-update'}
@@ -382,21 +304,45 @@ def delete_concept_from_graphdb(concept_uri, graphdb_endpoint):
         raise HTTPException(status_code=500, detail=f"Ошибка соединения с GraphDB при удалении концепта: {e}")
 
 
-def update_concept_name_in_graphdb(concept_uri, new_concept_name, graphdb_endpoint):
-    sparql_query = update_concept_name_query(concept_uri, new_concept_name)
-    print("Debug: update_concept_name_in_graphdb - SPARQL Query being sent for update concept name:")
-    print("SPARQL Query being sent for update concept name:", sparql_query)
-
+def _execute_sparql_update(query: str, graphdb_endpoint: str, operation_description: str):
+    """Helper function to execute SPARQL update queries."""
+    logger.debug(f"SPARQL Update Query for {operation_description}:\n{query}")
     headers = {'Content-Type': 'application/sparql-update'}
     try:
-        response = requests.post(graphdb_endpoint, data=sparql_query, headers=headers)
-        print(f"Debug: update_concept_name_in_graphdb - Response from GraphDB:")
-        print(f"Debug: update_concept_name_in_graphdb - Status code: {response.status_code}")
-        print(
-            f"Debug: update_concept_name_in_graphdb - Response content (first 100 chars): {response.content.decode('utf-8')[:100]}")
-        if response.status_code != 200 and response.status_code != 204:
-            raise Exception(
-                f"Помилка при оновленні назви концепту в GraphDB. Статус код: {response.status_code}, Відповідь: {response.text}")
+        response = requests.post(graphdb_endpoint, data=query, headers=headers)
+        # GraphDB typically returns 204 No Content for successful updates
+        if response.status_code == 200 or response.status_code == 204:
+             logger.info(f"{operation_description} successful. Status: {response.status_code}")
+             return True
+        else:
+            response.raise_for_status() # Raise HTTPError for other error codes
+    except requests.exceptions.HTTPError as http_err:
+        error_detail = (f"HTTP error during {operation_description}: {http_err}. "
+                        f"Status: {http_err.response.status_code}. Response: {http_err.response.text}")
+        logger.error(error_detail)
+        raise HTTPException(status_code=http_err.response.status_code, detail=error_detail)
     except requests.exceptions.RequestException as e:
-        raise HTTPException(
-            status_code=500, detail=f"Ошибка соединения с GraphDB при оновленні назви концепту: {e}")
+        error_detail = f"Connection error during {operation_description} with GraphDB: {e}"
+        logger.error(error_detail)
+        raise HTTPException(status_code=500, detail=error_detail)
+    return False # Should not be reached if an exception is raised
+
+
+def add_rdfs_label_to_graphdb(concept_uri: str, label_value: str, label_lang: Optional[str], graphdb_endpoint: str):
+    sparql_query = add_rdfs_label_query(concept_uri, label_value, label_lang)
+    _execute_sparql_update(sparql_query, graphdb_endpoint, f"adding rdfs:label '{label_value}@{label_lang if label_lang else ''}' to <{concept_uri}>")
+
+
+def delete_rdfs_label_from_graphdb(concept_uri: str, label_value: str, label_lang: Optional[str], graphdb_endpoint: str):
+    sparql_query = delete_rdfs_label_query(concept_uri, label_value, label_lang)
+    _execute_sparql_update(sparql_query, graphdb_endpoint, f"deleting rdfs:label '{label_value}@{label_lang if label_lang else ''}' from <{concept_uri}>")
+
+
+def add_rdfs_comment_to_graphdb(concept_uri: str, comment_value: str, comment_lang: Optional[str], graphdb_endpoint: str):
+    sparql_query = add_rdfs_comment_query(concept_uri, comment_value, comment_lang)
+    _execute_sparql_update(sparql_query, graphdb_endpoint, f"adding rdfs:comment to <{concept_uri}>")
+
+
+def delete_rdfs_comment_from_graphdb(concept_uri: str, comment_value: str, comment_lang: Optional[str], graphdb_endpoint: str):
+    sparql_query = delete_rdfs_comment_query(concept_uri, comment_value, comment_lang)
+    _execute_sparql_update(sparql_query, graphdb_endpoint, f"deleting rdfs:comment from <{concept_uri}>")
